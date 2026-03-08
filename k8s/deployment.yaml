@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fx-game-deployment
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: fx-game
+  template:
+    metadata:
+      labels:
+        app: fx-game
+    spec:
+      containers:
+      - name: fx-game
+        image: msfxtradinggame.azurecr.io/fx-trading-game:latest
+        ports:
+        - containerPort: 80
+        - containerPort: 443
+        env:
+        - name: DATA_PATH
+          valueFrom:
+            configMapKeyRef:
+              name: fx-game-config
+              key: DATA_PATH
+        - name: RESET_SCORE_ON_STARTUP
+          valueFrom:
+            configMapKeyRef:
+              name: fx-game-config
+              key: RESET_SCORE_ON_STARTUP
+        - name: TRADING_SERVER
+          valueFrom:
+            configMapKeyRef:
+              name: fx-game-config
+              key: TRADING_SERVER
+        - name: TRADING_SERVER_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: fx-game-config
+              key: TRADING_SERVER_PORT
+        - name: SECRET
+          valueFrom:
+            configMapKeyRef:
+              name: fx-game-config
+              key: SECRET
+        volumeMounts:
+        - name: fx-game-storage
+          mountPath: /data
+      volumes:
+      - name: fx-game-storage
+        persistentVolumeClaim:
+          claimName: fx-game-pvc
+      imagePullSecrets:
+        - name: acr-auth # See instructions to create this secret in the README.md file
+      nodeSelector:
+        agentpool: corepool

@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: Service
+metadata:
+  annotations:
+    service.beta.kubernetes.io/azure-load-balancer-resource-group: FX-Trading-Game-PROD
+    service.beta.kubernetes.io/azure-pip-name: fx-game-static-ip
+    service.beta.kubernetes.io/azure-dns-label-name: ms-fx-trading-game
+  name: fx-game-service
+spec:
+  type: LoadBalancer
+  ports:
+  - port: 80
+    targetPort: 80
+    protocol: TCP
+    name: http
+  - port: 443
+    targetPort: 443
+    protocol: TCP
+    name: https
+  selector:
+    app: fx-game

@@ -1,0 +1,2 @@
+class JsonRequiredError(Exception):
+    pass

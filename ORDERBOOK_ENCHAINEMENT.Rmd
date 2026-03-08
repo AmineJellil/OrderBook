@@ -1,0 +1,236 @@
+---
+title: "Enchaînement complet Order Book (Repo1 + intégration Repo2)"
+author: "Projet tradinggame-py"
+date: "2026-03-08"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    number_sections: true
+---
+
+# 1. Objectif
+
+Ce document décrit **l'enchaînement complet** du système Order Book intégré dans `tradinggame-py`, inspiré de `tradingGame-main`:
+
+- génération d'une courbe de liquidité,
+- maintien du carnet via NPC,
+- exécution des trades market,
+- exposition API,
+- affichage GUI live.
+
+Il sert de support pour réunion technique et handover.
+
+# 2. Composants et rôles
+
+## 2.1 `LiquidityCurve`
+
+Fichier: `app/lib/exchange/LiquidityCurve.py`
+
+Rôle:
+- Génère une courbe cible `{price: target_qty}` autour du `mid_price`.
+- Utilise une logique bimodale (PDF) pour obtenir un profil réaliste de liquidité.
+
+## 2.2 `NPCManager`
+
+Fichier: `app/lib/exchange/NPCManager.py`
+
+Rôle:
+- Met à jour la liquidité NPC dans le carnet:
+  1. construit la cible (`_build_curve`),
+  2. supprime les ordres NPC invalides (`_cancel_invalid_orders`),
+  3. remplit la liquidité manquante (`_fill_missing_liquidity`).
+
+## 2.3 `OrderBook`
+
+Fichier: `app/lib/exchange/OrderBook.py`
+
+Rôle:
+- Stocke les bids/asks triés.
+- Exécute les ordres market (`execute_market`).
+- Expose un snapshot (`snapshot`) pour API/GUI.
+
+## 2.4 `Exchange`
+
+Fichier: `app/lib/exchange/Exchange.py`
+
+Rôle:
+- Orchestrateur:
+  - appelle NPCManager au bon moment,
+  - déclenche exécution trade,
+  - met à jour historique et positions trader.
+
+## 2.5 API + GUI
+
+- API endpoint carnet: `app/lib/api/OrderBookEndpoint.py`
+- Route API: `app/sbin/api-server.py`
+- GUI client/API call: `app/cbin/gui/Client.py`
+- GUI rendu order book: `app/cbin/gui/Window.py`
+
+# 3. Flux A: rafraîchissement Order Book (affichage)
+
+## 3.1 Déclenchement côté GUI
+
+1. `Window.py` déclenche un refresh via `dcc.Interval`.
+2. `Client.get_order_book(product, levels)` envoie:
+   - `GET /orderbook/<product>?levels=N`.
+
+## 3.2 Passage API
+
+1. `OrderBookEndpoint.get(product)` reçoit la requête.
+2. Appelle:
+   - `Exchange.get_order_book_snapshot(product_name, levels)`.
+
+## 3.3 Orchestration Exchange
+
+Dans `get_order_book_snapshot(...)`:
+
+1. Récupère le carnet du produit (`OrderBook`).
+2. Récupère `current_price` (moteur de prix).
+3. Appelle `npc_manager.update(current_price)`.
+4. Lit `snapshot = order_book.snapshot(levels)`.
+5. Ajoute `snapshot["current_price"]`.
+6. Retourne le JSON à l'endpoint.
+
+## 3.4 Update NPC (détaillé)
+
+`NPCManager.update(mid_price)`:
+
+1. `curve = _build_curve(mid_price)`  
+   -> appel à `generate_bimodal_liquidity_curve(...)`  
+   -> obtient `{price: target_qty}`.
+
+2. `_cancel_invalid_orders(curve, mid_price)`  
+   -> supprime ordre NPC si:
+   - prix absent de la courbe, ou
+   - bid au mauvais côté (`>= mid`), ou
+   - ask au mauvais côté (`<= mid`).
+
+3. `_fill_missing_liquidity(curve, mid_price)`  
+   -> pour chaque `(price, target_qty)`:
+   - calcule la quantité NPC actuelle à ce niveau,
+   - si différente de `target_qty`, remplace le niveau NPC.
+
+## 3.5 Affichage final GUI
+
+Le GUI reçoit:
+
+- `bids`, `asks`,
+- `best_bid`, `best_ask`,
+- `current_price`.
+
+Puis affiche:
+
+- tableau `Bid Px / Bid Qty / Ask Qty / Ask Px`,
+- spread = `best_ask - best_bid`,
+- informations de synthèse.
+
+# 4. Flux B: exécution d'un trade équipe (`/trade`)
+
+## 4.1 Déclenchement API trade
+
+1. Team envoie `POST /trade/<product>` avec:
+   - `trader_id`,
+   - `side`,
+   - `quantity`.
+2. `TradeEndpoint.post(...)` appelle:
+   - `Exchange.try_trade(...)`.
+
+## 4.2 Étapes `Exchange.try_trade(...)`
+
+1. Vérifications:
+   - trading activé,
+   - produit valide,
+   - trader existe.
+
+2. Récupère:
+   - `current_time`,
+   - `current_price`.
+
+3. **Update NPC juste avant exécution**:
+   - `npc_manager.update(current_price)`.
+
+4. Exécution market:
+   - `execution = order_book.execute_market(side, qty)`.
+
+5. Si rien rempli:
+   - trade échoue (`False, 0.0`).
+
+6. Sinon:
+   - `executed_qty = execution["filled_quantity"]`,
+   - `executed_price = execution["average_price"]`.
+
+7. Création objet `Trade(...)` puis contrôles métier:
+   - pas deux trades même timestamp/trader,
+   - inventaire/cash suffisant.
+
+8. Si validé:
+   - `trader.record_trade(trade)` (positions/PnL),
+   - append dans `exchange.trades`.
+
+9. Retour API:
+   - succès + prix d'exécution.
+
+## 4.3 Ce que fait `OrderBook.execute_market(...)`
+
+1. Choisit le côté opposé:
+   - BUY consomme asks,
+   - SELL consomme bids.
+
+2. Consomme niveau par niveau (best first):
+   - `trade_qty = min(remaining, best_level_qty)`,
+   - met à jour `remaining`, `filled`, `total_cost`.
+
+3. Retire un niveau si qty tombe à 0.
+
+4. Calcule:
+   - `average_price = total_cost / filled`.
+
+5. Retourne:
+   - `filled_quantity`,
+   - `remaining_quantity`,
+   - `average_price`,
+   - `status` (`FILLED`, `PARTIAL`, `FAILED`).
+
+# 5. Pourquoi update NPC à la fois sur `/orderbook` et `/trade`
+
+## 5.1 Sur `/orderbook`
+
+Pour que l'affichage GUI montre un carnet cohérent avec le `current_price` le plus récent.
+
+## 5.2 Sur `/trade`
+
+Pour éviter d'exécuter un ordre sur un carnet devenu stale entre deux ticks GUI.
+
+Effet:
+- exécution plus réaliste,
+- cohérence prix/liq au moment exact du trade.
+
+# 6. Différence `current_price` vs `average_price`
+
+- `current_price`:
+  - prix spot/théorique du moteur de prix.
+  - ancre utilisée pour construire la courbe NPC.
+
+- `average_price`:
+  - prix moyen réellement obtenu par l'ordre market,
+  - dépend de la profondeur consommée (slippage/impact).
+
+# 7. Résumé exécutif (version courte)
+
+1. `LiquidityCurve` calcule une cible de liquidité (prix -> quantité) autour du mid.
+2. `NPCManager` maintient le carnet en cohérence avec cette cible.
+3. `OrderBook` exécute les ordres market contre la profondeur disponible.
+4. `Exchange` orchestre tout et met à jour trades/positions.
+5. API + GUI exposent l'état en live.
+
+# 8. Résumé réunion (version 30 sec)
+
+On a intégré dans repo1 une architecture inspirée repo2:
+- courbe de liquidité bimodale,
+- gestion NPC par cycle cancel/fill,
+- exécution des trades market sur un vrai carnet,
+- endpoint et GUI order book live.
+
+Le résultat: prix d'exécution plus réaliste, profondeur visible, et base propre pour ajouter les limit orders équipes ensuite.
+

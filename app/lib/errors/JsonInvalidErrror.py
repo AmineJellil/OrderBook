@@ -1,0 +1,2 @@
+class JsonInvalidError(Exception):
+    pass

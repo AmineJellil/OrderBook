@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: fx-game-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  # storageClassName is not needed, AKS will use 'default' if not specified
+  # this is ok as the default support automatic persistent volume provisioning
+  # You can find more details here: https://learn.microsoft.com/en-us/azure/aks/concepts-storage#persistent-volume-claims
+  resources:
+    requests:
+      storage: 1Gi

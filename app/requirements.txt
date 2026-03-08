@@ -1,0 +1,10 @@
+APScheduler==3.6.3
+dash==1.21.0
+Flask==1.1.1
+Flask-RESTful==0.3.8
+flask-restful-swagger==0.20.1
+numpy==1.18.1
+requests==2.23.0
+scipy==1.4.1
+six==1.14.0
+tzlocal<3.0
