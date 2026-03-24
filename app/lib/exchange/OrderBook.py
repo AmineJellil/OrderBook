@@ -181,3 +181,32 @@ class OrderBook:
                 "order_id": resting_order_id,
                 "limit_price": float(limit_price),
             }
+
+    def resolve_crossed_book(self):
+        """Match resting orders while best bid crosses best ask."""
+        with self._lock:
+            fills = []
+            while self._bids and self._asks and self._bids[0].price >= self._asks[0].price:
+                best_bid = self._bids[0]
+                best_ask = self._asks[0]
+                trade_qty = min(best_bid.quantity, best_ask.quantity)
+                trade_price = best_ask.price
+
+                fills.append(
+                    {
+                        "buy_trader_id": best_bid.trader_id,
+                        "sell_trader_id": best_ask.trader_id,
+                        "quantity": trade_qty,
+                        "price": trade_price,
+                    }
+                )
+
+                best_bid.quantity -= trade_qty
+                best_ask.quantity -= trade_qty
+
+                if best_bid.quantity == 0:
+                    self._bids.pop(0)
+                if best_ask.quantity == 0:
+                    self._asks.pop(0)
+
+            return fills

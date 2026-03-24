@@ -82,10 +82,13 @@ class Exchange:
         book = self.get_order_book(product_name)
         if book is None:
             return None
-        _, current_price = self.get_current_price(product_name)
+        current_time, current_price = self.get_current_price(product_name)
         if current_price is None:
             return None
         self.npc_managers[book.symbol].update(current_price)
+        passive_fills = book.resolve_crossed_book()
+        if passive_fills:
+            self._record_passive_fills(passive_fills, self.get_product(product_name).get_pair(), current_time)
         snapshot = book.snapshot(levels=levels)
         snapshot["current_price"] = current_price
         return snapshot
@@ -93,6 +96,33 @@ class Exchange:
     @staticmethod
     def product_exists(product_name):
         return get_pair(product_name) is not None
+
+    def _record_trade_without_request_checks(self, trader_id, side_enum, qty, pair, price, trade_time):
+        trader = self.traders.get(trader_id)
+        if trader is None or qty <= 0:
+            return
+        trade = Trade(trader, side_enum, qty, pair, price, trade_time)
+        trader.record_trade(trade)
+        self.trades.append(trade)
+
+    def _record_passive_fills(self, fills, pair, trade_time):
+        for fill in fills:
+            self._record_trade_without_request_checks(
+                trader_id=fill["buy_trader_id"],
+                side_enum=Side.BUY,
+                qty=fill["quantity"],
+                pair=pair,
+                price=fill["price"],
+                trade_time=trade_time,
+            )
+            self._record_trade_without_request_checks(
+                trader_id=fill["sell_trader_id"],
+                side_enum=Side.SELL,
+                qty=fill["quantity"],
+                pair=pair,
+                price=fill["price"],
+                trade_time=trade_time,
+            )
 
     def try_trade(self, trader_id, side, qty, product_name, limit_price=None):
         try:
@@ -108,6 +138,9 @@ class Exchange:
             if book is None:
                 return False, 0.0
             self.npc_managers[book.symbol].update(current_price)
+            passive_fills = book.resolve_crossed_book()
+            if passive_fills:
+                self._record_passive_fills(passive_fills, p.get_pair(), current_time)
 
             if limit_price is None:
                 execution = book.execute_market(side=side_enum, quantity=qty)
