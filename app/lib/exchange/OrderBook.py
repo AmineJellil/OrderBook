@@ -109,6 +109,7 @@ class OrderBook:
             remaining = quantity
             total_cost = 0.0
             filled = 0
+            fills = []
 
             while remaining > 0 and resting:
                 best = resting[0]
@@ -116,6 +117,13 @@ class OrderBook:
                 remaining -= trade_qty
                 filled += trade_qty
                 total_cost += trade_qty * best.price
+                fills.append(
+                    {
+                        "counterparty_trader_id": best.trader_id,
+                        "quantity": trade_qty,
+                        "price": best.price,
+                    }
+                )
                 best.quantity -= trade_qty
                 if best.quantity == 0:
                     resting.pop(0)
@@ -127,6 +135,7 @@ class OrderBook:
                 "remaining_quantity": remaining,
                 "average_price": avg_price,
                 "status": status,
+                "fills": fills,
             }
 
     def execute_limit(self, trader_id: str, side: Side, quantity: int, limit_price: float):
@@ -135,6 +144,7 @@ class OrderBook:
             remaining = quantity
             total_cost = 0.0
             filled = 0
+            fills = []
 
             def is_crossing(best_price):
                 if side is Side.BUY:
@@ -147,6 +157,13 @@ class OrderBook:
                 remaining -= trade_qty
                 filled += trade_qty
                 total_cost += trade_qty * best.price
+                fills.append(
+                    {
+                        "counterparty_trader_id": best.trader_id,
+                        "quantity": trade_qty,
+                        "price": best.price,
+                    }
+                )
                 best.quantity -= trade_qty
                 if best.quantity == 0:
                     resting.pop(0)
@@ -180,6 +197,7 @@ class OrderBook:
                 "status": status,
                 "order_id": resting_order_id,
                 "limit_price": float(limit_price),
+                "fills": fills,
             }
 
     def resolve_crossed_book(self):

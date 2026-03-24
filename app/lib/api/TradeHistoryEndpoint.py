@@ -23,6 +23,6 @@ class TradeHistoryEndpoint(Resource):
 
         try:
             trades = self.exchange.get_trade_history()
-            return [TradeHistoryResult(t) for t in trades.values()]
+            return [TradeHistoryResult(t) for t in trades]
         except KeyError:
             raise JsonInvalidError()

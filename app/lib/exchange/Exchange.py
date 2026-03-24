@@ -54,10 +54,8 @@ class Exchange:
         return True
 
     def get_trade_history(self):
-        trade_history = {}
-        for trade in self.trades:
-            trade_history[trade.get_time()] = trade
-        return trade_history
+        # Preserve insertion order and keep multiple trades that share the same timestamp.
+        return list(self.trades)
 
     @staticmethod
     def get_products():
@@ -124,6 +122,18 @@ class Exchange:
                 trade_time=trade_time,
             )
 
+    def _record_counterparty_fills(self, aggressor_side, fills, pair, trade_time):
+        counterparty_side = Side.SELL if aggressor_side is Side.BUY else Side.BUY
+        for fill in fills:
+            self._record_trade_without_request_checks(
+                trader_id=fill.get("counterparty_trader_id"),
+                side_enum=counterparty_side,
+                qty=fill.get("quantity", 0),
+                pair=pair,
+                price=fill.get("price", 0.0),
+                trade_time=trade_time,
+            )
+
     def try_trade(self, trader_id, side, qty, product_name, limit_price=None):
         try:
             if not self.trading_enabled:
@@ -168,7 +178,7 @@ class Exchange:
             executed_price = execution["average_price"]
             trade = Trade(self.traders[trader_id], side_enum, executed_qty, p.get_pair(), executed_price, current_time)
             # Not allowed to trade twice in the same period
-            if current_time in [t for t, tr in self.get_trade_history().items()
+            if current_time in [tr.get_time() for tr in self.trades
                                 if tr.get_trader().get_trader_id() == trader_id]:
                 return False, 0.0
             # Not allowed to buy/sell if you do not have enough cash
@@ -180,6 +190,12 @@ class Exchange:
                 return False, 0.0
             trader.record_trade(trade)
             self.trades.append(trade)
+            self._record_counterparty_fills(
+                aggressor_side=side_enum,
+                fills=execution.get("fills", []),
+                pair=p.get_pair(),
+                trade_time=current_time,
+            )
             return True, executed_price
         except KeyError as e:
             e.with_traceback(sys.exc_info()[2])
