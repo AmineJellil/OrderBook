@@ -20,9 +20,11 @@ def get_price():
     return None
 
 
-def trade(trader_id, qty, side):
+def trade(trader_id, qty, side, price=None):
     api_url = URL + "/trade/EURGBP"
     data = {"trader_id": trader_id, "quantity": qty, "side": side}
+    if price is not None:
+        data["price"] = price
     res = requests.post(api_url, json=data)
     if res.status_code == 200:
         resp_json = json.loads(res.content.decode('utf-8'))

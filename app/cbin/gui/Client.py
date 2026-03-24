@@ -28,8 +28,10 @@ class Client:
     def get_normalized_capital(self):
         return self.safe_get('/normalizedCapitals')
 
-    def trade(self, product, trader_id, qty, side):
+    def trade(self, product, trader_id, qty, side, price=None):
         data = {"trader_id": trader_id, "quantity": qty, "side": side}
+        if price is not None:
+            data["price"] = price
         return self.safe_post("/trade/" + product, data)
 
     def safe_get(self, api):

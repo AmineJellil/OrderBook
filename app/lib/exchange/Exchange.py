@@ -94,7 +94,7 @@ class Exchange:
     def product_exists(product_name):
         return get_pair(product_name) is not None
 
-    def try_trade(self, trader_id, side, qty, product_name):
+    def try_trade(self, trader_id, side, qty, product_name, limit_price=None):
         try:
             if not self.trading_enabled:
                 return False, 0.0
@@ -108,9 +108,29 @@ class Exchange:
             if book is None:
                 return False, 0.0
             self.npc_managers[book.symbol].update(current_price)
-            execution = book.execute_market(side=side_enum, quantity=qty)
-            if execution["filled_quantity"] <= 0:
+
+            if limit_price is None:
+                execution = book.execute_market(side=side_enum, quantity=qty)
+            else:
+                # Product rule: one active (resting) limit order per trader.
+                # A new limit order replaces the previous one for this trader.
+                book.cancel_trader_orders(trader_id=trader_id)
+                execution = book.execute_limit(
+                    trader_id=trader_id,
+                    side=side_enum,
+                    quantity=qty,
+                    limit_price=float(limit_price),
+                )
+
+            if execution["status"] == "FAILED":
                 return False, 0.0
+
+            # Limit order accepted but not filled yet: no position/trade update now.
+            if execution["filled_quantity"] <= 0:
+                if execution["status"] == "ACCEPTED":
+                    return True, float(limit_price)
+                return False, 0.0
+
             executed_qty = execution["filled_quantity"]
             executed_price = execution["average_price"]
             trade = Trade(self.traders[trader_id], side_enum, executed_qty, p.get_pair(), executed_price, current_time)

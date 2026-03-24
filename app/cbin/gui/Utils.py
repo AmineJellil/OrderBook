@@ -147,7 +147,7 @@ def modal(pair):
                                     ),
                                     html.Div(
                                         children=[
-                                            html.P("Type"),
+                                            html.P("Side"),
                                             dcc.RadioItems(
                                                 id=pair + "trade_type",
                                                 options=[
@@ -156,6 +156,33 @@ def modal(pair):
                                                 ],
                                                 value="buy",
                                                 labelStyle={"display": "inline-block"},
+                                            ),
+                                        ]
+                                    ),
+                                    html.Div(
+                                        children=[
+                                            html.P("Order Mode"),
+                                            dcc.RadioItems(
+                                                id=pair + "order_mode",
+                                                options=[
+                                                    {"label": "Market", "value": "market"},
+                                                    {"label": "Limit", "value": "limit"},
+                                                ],
+                                                value="market",
+                                                labelStyle={"display": "inline-block"},
+                                            ),
+                                        ]
+                                    ),
+                                    html.Div(
+                                        children=[
+                                            html.P("Limit Price"),
+                                            dcc.Input(
+                                                id=pair + "limit_price",
+                                                className="modal-input",
+                                                type="number",
+                                                min=0,
+                                                step=0.00001,
+                                                placeholder="e.g. 0.87850",
                                             ),
                                         ]
                                     ),
@@ -218,8 +245,22 @@ def generate_modal_close_callback():
 
 # Function to trade a position
 def generate_order_button_callback(pair, client):
-    def order_callback(n, volume, order_type, trader_id):
-        client.trade(pair, trader_id, str(volume), order_type)
+    def order_callback(n, volume, side, trader_id, order_mode, limit_price):
+        if not n:
+            return ""
+        if trader_id is None or str(trader_id).strip() == "":
+            return ""
+        if volume is None:
+            return ""
+
+        if order_mode == "limit":
+            if limit_price is None or float(limit_price) <= 0:
+                return ""
+            client.trade(pair, str(trader_id).strip(), str(volume), side, float(limit_price))
+            return ""
+
+        client.trade(pair, str(trader_id).strip(), str(volume), side)
+        return ""
     return order_callback
 
 

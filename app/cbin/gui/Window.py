@@ -125,6 +125,8 @@ for pair in currencies:
             State(pair + "volume", "value"),
             State(pair + "trade_type", "value"),
             State(pair + "traderId", "value"),
+            State(pair + "order_mode", "value"),
+            State(pair + "limit_price", "value"),
         ],
     )(generate_order_button_callback(pair, client))
     app.callback([Output(pair + 'chart', 'figure'),

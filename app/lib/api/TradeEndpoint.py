@@ -52,11 +52,15 @@ class TradeEndpoint(Resource):
         trader_id = args['trader_id']
         side = args['side']
         quantity = args['quantity']
+        limit_price = args['price']
 
         # Disable all trading with quantities below or equal to zero and above max trade size.
         if quantity <= 0 or quantity > self.max_tradesize:
             return TradeResult(success=False, price=0.0)
+        if limit_price is not None and limit_price <= 0:
+            return TradeResult(success=False, price=0.0)
 
-        (success, price) = self.exchange.try_trade(trader_id=trader_id, side=side,
-                                                   qty=quantity, product_name=product)
-        return TradeResult(success=success, price=price)
+        (success, executed_price) = self.exchange.try_trade(trader_id=trader_id, side=side,
+                                                            qty=quantity, product_name=product,
+                                                            limit_price=limit_price)
+        return TradeResult(success=success, price=executed_price)

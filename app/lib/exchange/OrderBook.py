@@ -64,6 +64,11 @@ class OrderBook:
                         return True
             return False
 
+    def cancel_trader_orders(self, trader_id: str):
+        with self._lock:
+            self._bids = [o for o in self._bids if o.trader_id != trader_id]
+            self._asks = [o for o in self._asks if o.trader_id != trader_id]
+
     def cancel_orders_at_price(self, price: float, side: Side, trader_id=None):
         with self._lock:
             book_side = self._bids if side is Side.BUY else self._asks
@@ -122,4 +127,57 @@ class OrderBook:
                 "remaining_quantity": remaining,
                 "average_price": avg_price,
                 "status": status,
+            }
+
+    def execute_limit(self, trader_id: str, side: Side, quantity: int, limit_price: float):
+        with self._lock:
+            resting = self._asks if side is Side.BUY else self._bids
+            remaining = quantity
+            total_cost = 0.0
+            filled = 0
+
+            def is_crossing(best_price):
+                if side is Side.BUY:
+                    return best_price <= limit_price
+                return best_price >= limit_price
+
+            while remaining > 0 and resting and is_crossing(resting[0].price):
+                best = resting[0]
+                trade_qty = min(remaining, best.quantity)
+                remaining -= trade_qty
+                filled += trade_qty
+                total_cost += trade_qty * best.price
+                best.quantity -= trade_qty
+                if best.quantity == 0:
+                    resting.pop(0)
+
+            resting_order_id = None
+            if remaining > 0:
+                resting_order = BookOrder(
+                    order_id=self._new_order_id(),
+                    trader_id=trader_id,
+                    side=side,
+                    quantity=remaining,
+                    price=float(limit_price),
+                )
+                self._insert_order(resting_order)
+                resting_order_id = resting_order.order_id
+
+            avg_price = (total_cost / filled) if filled > 0 else 0.0
+            if filled == 0 and remaining > 0:
+                status = "ACCEPTED"
+            elif filled > 0 and remaining > 0:
+                status = "PARTIAL"
+            elif filled > 0 and remaining == 0:
+                status = "FILLED"
+            else:
+                status = "FAILED"
+
+            return {
+                "filled_quantity": filled,
+                "remaining_quantity": remaining,
+                "average_price": avg_price,
+                "status": status,
+                "order_id": resting_order_id,
+                "limit_price": float(limit_price),
             }
