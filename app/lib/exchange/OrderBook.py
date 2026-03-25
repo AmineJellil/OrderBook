@@ -103,7 +103,14 @@ class OrderBook:
             best_ask = self._asks[0].price if self._asks else None
             return {"bids": bids, "asks": asks, "best_bid": best_bid, "best_ask": best_ask}
 
-    def execute_market(self, side: Side, quantity: int):
+    def _first_matchable_index(self, resting_orders, aggressor_trader_id=None):
+        for idx, order in enumerate(resting_orders):
+            if aggressor_trader_id is not None and order.trader_id == aggressor_trader_id:
+                continue
+            return idx
+        return None
+
+    def execute_market(self, side: Side, quantity: int, aggressor_trader_id=None):
         with self._lock:
             resting = self._asks if side is Side.BUY else self._bids
             remaining = quantity
@@ -112,7 +119,13 @@ class OrderBook:
             fills = []
 
             while remaining > 0 and resting:
-                best = resting[0]
+                best_idx = self._first_matchable_index(
+                    resting_orders=resting,
+                    aggressor_trader_id=aggressor_trader_id,
+                )
+                if best_idx is None:
+                    break
+                best = resting[best_idx]
                 trade_qty = min(remaining, best.quantity)
                 remaining -= trade_qty
                 filled += trade_qty
@@ -126,7 +139,7 @@ class OrderBook:
                 )
                 best.quantity -= trade_qty
                 if best.quantity == 0:
-                    resting.pop(0)
+                    resting.pop(best_idx)
 
             avg_price = (total_cost / filled) if filled > 0 else 0.0
             status = "FILLED" if remaining == 0 and filled > 0 else ("PARTIAL" if filled > 0 else "FAILED")
@@ -151,8 +164,18 @@ class OrderBook:
                     return best_price <= limit_price
                 return best_price >= limit_price
 
-            while remaining > 0 and resting and is_crossing(resting[0].price):
-                best = resting[0]
+            while remaining > 0 and resting:
+                best_idx = self._first_matchable_index(
+                    resting_orders=resting,
+                    aggressor_trader_id=trader_id,
+                )
+                if best_idx is None:
+                    break
+
+                best = resting[best_idx]
+                if not is_crossing(best.price):
+                    break
+
                 trade_qty = min(remaining, best.quantity)
                 remaining -= trade_qty
                 filled += trade_qty
@@ -166,7 +189,7 @@ class OrderBook:
                 )
                 best.quantity -= trade_qty
                 if best.quantity == 0:
-                    resting.pop(0)
+                    resting.pop(best_idx)
 
             resting_order_id = None
             if remaining > 0:

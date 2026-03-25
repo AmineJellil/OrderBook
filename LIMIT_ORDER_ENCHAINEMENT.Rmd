@@ -1,0 +1,198 @@
+---
+title: "Limit Orders - Enchainement Complet"
+author: "Trading Game Integration"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+---
+
+# Objectif
+
+Ce document explique simplement comment un **limit order** est traite dans le projet `tradinggame-orderbook-integration-clean`, quelles classes interviennent, et ce qui se passe jusqu'a l'affichage GUI.
+
+# 1. Vue d'ensemble
+
+Un ordre arrive via l'API `/trade/<product>`.
+
+- Si `price` est absent: ordre **market**
+- Si `price` est present: ordre **limit**
+
+Le moteur:
+
+1. met a jour la liquidite NPC,
+2. fait le matching dans le `OrderBook`,
+3. met a jour positions + historique pour les deux cotes (agresseur et passif),
+4. expose le resultat via les endpoints API, puis la GUI rafraichit.
+
+# 2. Classes utilisees
+
+## 2.1 Entree API
+
+- `TradeEndpoint`  
+  Fichier: `app/lib/api/TradeEndpoint.py`  
+  Role: lit `trader_id`, `side`, `quantity`, `price`, puis appelle `Exchange.try_trade(...)`.
+
+## 2.2 Orchestration
+
+- `Exchange`  
+  Fichier: `app/lib/exchange/Exchange.py`  
+  Role: coeur du flow de trading.
+
+Fonctions importantes:
+
+- `try_trade(...)`
+- `get_order_book_snapshot(...)`
+- `_record_passive_fills(...)`
+- `_record_counterparty_fills(...)`
+
+## 2.3 Carnet d'ordres
+
+- `OrderBook`  
+  Fichier: `app/lib/exchange/OrderBook.py`  
+  Role: stockage bids/asks + matching.
+
+Fonctions importantes:
+
+- `execute_market(...)`
+- `execute_limit(...)`
+- `add_limit_order(...)`
+- `cancel_trader_orders(...)`
+- `resolve_crossed_book(...)`
+- `snapshot(...)`
+
+## 2.4 Liquidite NPC
+
+- `NPCManager`  
+  Fichier: `app/lib/exchange/NPCManager.py`
+- `LiquidityCurve`  
+  Fichier: `app/lib/exchange/LiquidityCurve.py`
+
+Role: maintenir un carnet vivant autour du `current_price`.
+
+## 2.5 Donnees metier
+
+- `Trade` (`app/lib/models/exchange/Trade.py`)
+- `Trader` (`app/lib/models/exchange/Trader.py`)
+
+Role: enregistrer les executions et mettre a jour inventaires EUR/GBP.
+
+# 3. Enchainement detaille d'un LIMIT order
+
+## Etape 1 - Requete API
+
+Exemple:
+
+```bash
+POST /trade/EURGBP
+{
+  "trader_id": "...",
+  "side": "sell",
+  "quantity": 3000,
+  "price": 0.91000
+}
+```
+
+`TradeEndpoint` detecte un **limit order** car `price` est present.
+
+## Etape 2 - Appel moteur
+
+`TradeEndpoint` appelle:
+
+```python
+Exchange.try_trade(trader_id, side, qty, product_name, limit_price)
+```
+
+## Etape 3 - Update du contexte de marche
+
+Dans `Exchange.try_trade(...)`:
+
+1. validation produit et trader,
+2. recuperation `current_price`,
+3. `npc_manager.update(current_price)`,
+4. `order_book.resolve_crossed_book()` + enregistrement des fills passifs eventuels.
+
+## Etape 4 - Execution LIMIT
+
+`OrderBook.execute_limit(...)`:
+
+1. cherche la contrepartie compatible (crossing),
+2. execute immediatement ce qui est matchable,
+3. si reste non execute, cree un **resting order** dans le carnet.
+
+Status possibles:
+
+- `ACCEPTED` (rien execute, ordre place)
+- `PARTIAL` (partiellement execute + reliquat place)
+- `FILLED` (tout execute)
+- `FAILED` (aucune execution possible/valide)
+
+## Etape 5 - Comptabilisation des deux cotes
+
+Apres execution:
+
+- le trade de l'agresseur est enregistre,
+- les fills passifs sont aussi enregistres via `_record_counterparty_fills(...)`.
+
+Donc si Team B tape le limit sell de Team A:
+
+- Team B: `Buy` en historique + EUR augmente,
+- Team A: `Sell` en historique + EUR diminue.
+
+## Etape 6 - Exposition API et GUI
+
+- `/orderbook/<product>`: snapshot du carnet,
+- `/tradeHistory`: historique des executions,
+- `/positions/<trader_id>`: inventaires.
+
+La GUI lit ces endpoints periodiquement et affiche:
+
+- tableau bid/ask,
+- historique des trades,
+- capitals/PnL.
+
+# 4. Regles fonctionnelles en place
+
+## 4.1 Un seul limit actif par equipe
+
+Avant un nouveau limit order d'un trader:
+
+```python
+book.cancel_trader_orders(trader_id)
+```
+
+Le nouveau limit remplace l'ancien.
+
+## 4.2 Priorite de matching
+
+Le matching respecte la logique carnet:
+
+- meilleur prix d'abord,
+- puis ordre d'arrivee sur ce prix.
+
+## 4.3 Market vs Limit
+
+- Market: consomme direct le carnet (pas de prix impose)
+- Limit: impose un prix max (buy) ou min (sell), et peut rester en attente.
+
+# 5. Scenario de demo simple (pour reunion)
+
+1. Team A achete un peu d'EUR (pour pouvoir sell ensuite).  
+2. Team A envoie un `sell limit` (qui ne croise pas tout de suite).  
+3. Team B envoie un `buy market`.  
+4. Le market buy prend la meilleure ask disponible (souvent celle de Team A si elle est meilleure).  
+5. Verifier:
+   - `positions Team A`: EUR diminue,
+   - `positions Team B`: EUR augmente,
+   - `tradeHistory`: ligne `Buy` Team B + ligne `Sell` Team A.
+
+# 6. Points a expliquer en une phrase
+
+- `TradeEndpoint` recoit l'ordre.
+- `Exchange` orchestre.
+- `NPCManager` maintient la liquidite.
+- `OrderBook` match les ordres.
+- `Trade/Trader` enregistrent les deux jambes.
+- `OrderBookEndpoint` et `TradeHistoryEndpoint` alimentent la GUI.
+

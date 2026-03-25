@@ -153,7 +153,11 @@ class Exchange:
                 self._record_passive_fills(passive_fills, p.get_pair(), current_time)
 
             if limit_price is None:
-                execution = book.execute_market(side=side_enum, quantity=qty)
+                execution = book.execute_market(
+                    side=side_enum,
+                    quantity=qty,
+                    aggressor_trader_id=trader_id,
+                )
             else:
                 # Product rule: one active (resting) limit order per trader.
                 # A new limit order replaces the previous one for this trader.
